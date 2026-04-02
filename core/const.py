@@ -15,6 +15,12 @@ As an experienced and professional database administrator, your task is to analy
 3. Ensure that at least 3 tables are included in the final output JSON.
 4. The output should be in JSON format.
 
+[Critical Table Selection Skills — follow these to avoid missing required tables]:
+1. Extract ALL explicit and implicit data attributes required by the question, including those inferred from context or relationships (e.g., if asked for "salary", the table containing salary must be included even if not explicitly named).
+2. For each attribute, identify the table where it resides by consulting the schema. Include ALL identified tables; if multiple tables are needed, ensure join paths via foreign keys are preserved.
+3. When the question involves comparing or filtering across different entities, make sure to include bridge/junction tables that connect them, even if those tables are not directly mentioned.
+4. Do NOT drop a table that contains columns referenced in the question or needed for joining to reach a required column.
+
 Requirements:
 1. If a table has less than or equal to 10 columns, mark it as "keep_all".
 2. If a table is completely irrelevant to the user question and evidence, mark it as "drop_all".
@@ -111,6 +117,13 @@ When generating SQL, we should always consider constraints:
 - If use max or min func, `JOIN <table>` FIRST, THEN use `SELECT MAX(<column>)` or `SELECT MIN(<column>)`
 - If [Value examples] of <column> has 'None' or None, use `JOIN <table>` or `WHERE <column> is NOT NULL` is better
 - If use `ORDER BY <column> ASC|DESC`, add `GROUP BY <column>` before to select distinct values
+
+【SQL Strategy Skills — follow these learned patterns to avoid common errors】
+1. Table & Join Strategy: Identify all required attributes, map each to its source table, and include only the minimal set of tables connected through foreign keys. Join tables directly, skipping intermediate tables that don't contribute columns.
+2. Attribute-Table Mapping: For each attribute in the question/evidence, explicitly identify the correct table and column from the schema. Avoid adding implicit conditions (IS NOT NULL, extra filters) not specified in the question.
+3. Aggregation Rules: Use COUNT/SUM/AVG only when the question asks for summary measures. Add GROUP BY only for categorical breakdowns. If listing individual items, avoid aggregation entirely.
+4. Ranking Queries: For finding max/min/nth values, prefer ORDER BY + LIMIT over subqueries with MAX/MIN. Ensure ORDER BY direction matches the question intent (ASC vs DESC).
+5. Avoid Unnecessary Clauses: Do NOT add ORDER BY unless the question explicitly requests sorted results. Do NOT add LIMIT unless the question asks for a bounded number. For "how many" questions, use COUNT() instead of LIMIT.
 
 ==========
 

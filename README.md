@@ -1,49 +1,72 @@
-<p align="center">
-  <h1 align="center">SQLaxy</h1>
-  <p align="center">A Multi-Agent System for Text-to-SQL, powered by LangGraph</p>
-</p>
 
-<p align="center">
-  <a href="./README_CN.md">中文</a> | English
-</p>
+
+# SQL-Evolve
+
+**Distilling Skills from Errors — A Self-Evolving Multi-Agent Text-to-SQL System**
+
+[Python 3.9+](https://www.python.org/downloads/)
+[License: Apache 2.0](./LICENSE)
+[LangGraph](https://github.com/langchain-ai/langgraph)
+
+[English](./README.md) | [中文](./README_CN.md)
+
+
 
 ---
 
-## Introduction
+## What is SQL-Evolve?
 
-SQLaxy is a multi-agent collaborative Text-to-SQL system built on [LangGraph](https://github.com/langchain-ai/langgraph). Given a natural language question and a database, SQLaxy automatically generates the corresponding SQL query through three specialized agents:
+SQL-Evolve is a multi-agent Text-to-SQL system that **learns from its own mistakes**. Beyond the standard Selector → Decomposer → Refiner pipeline, SQL-Evolve introduces an **error-driven skill evolution loop**: it automatically analyzes failed SQL queries, distills reusable strategies ("skills") from error patterns, and injects them back into the pipeline — making itself progressively better over iterations.
 
-- **Selector** — Analyzes the database schema, prunes irrelevant tables and columns, and provides a focused schema to downstream agents.
-- **Decomposer** — Decomposes complex questions into sub-questions and generates SQL step by step using chain-of-thought reasoning.
-- **Refiner** — Executes the generated SQL against the database, detects errors, and iteratively refines the query until it passes validation.
+### Key Features
 
-The agent orchestration is implemented as a LangGraph `StateGraph`, with the Refiner using a conditional self-loop for automatic error correction.
+- **Three-Agent Pipeline** — Selector (schema pruning) → Decomposer (CoT SQL generation) → Refiner (execution-based error correction), orchestrated via LangGraph `StateGraph`
+- **Self-Evolving Skill Discovery** — Automatically analyzes wrong answers, groups error patterns, and creates generalizable SQL writing strategies
+- **Meta-Skill Operations** — Create / Merge / Split / Eliminate — the skill library manages its own lifecycle
+- **Two-Layer Skill Loading** — Lightweight index (always loaded) + full skill body (loaded on demand), reducing context overhead by ~85%
+- **Checkpoint Resume** — Interrupted? Just re-run. Already completed items are skipped automatically.
+- **Model Agnostic** — Works with any OpenAI-compatible API (DeepSeek, GPT-4, local models, etc.)
 
-```
-┌──────────┐     ┌──────────────┐     ┌──────────┐
-│ Selector │────▶│  Decomposer  │────▶│  Refiner  │──▶ Output
-└──────────┘     └──────────────┘     └────┬──────┘
-                                           │  ▲
-                                           │  │ need_refine
-                                           └──┘
-```
+---
 
-SQLaxy currently supports evaluation on the [BIRD](https://bird-bench.github.io/) and [Spider](https://yale-lily.github.io/spider) benchmarks.
+## Results
 
-## Setup
+### BIRD-dev (EX Accuracy)
 
-### 1. Environment
+
+| Difficulty  | Correct / Total | Accuracy  |
+| ----------- | --------------- | --------- |
+| Simple      | 606 / 925       | 65.5%     |
+| Moderate    | 237 / 465       | 51.0%     |
+| Challenging | 71 / 144        | 49.3%     |
+| **Overall** | **914 / 1534**  | **59.6%** |
+
+
+> Evaluated with `deepseek-chat` as the backbone LLM.
+
+---
+
+## Architecture
+
+<p align="center">
+  <img src="./assets/SQL-Evolve.png" alt="SQL-Evolve Architecture" width="90%">
+</p>
+
+
+---
+
+## Quick Start
+
+### 1. Install
 
 ```bash
-conda create -n sqlaxy python=3.9 -y
-conda activate sqlaxy
+conda create -n sql-evolve python=3.9 -y
+conda activate sql-evolve
 pip install -r requirements.txt
 python -c "import nltk; nltk.download('punkt')"
 ```
 
-### 2. Configuration
-
-SQLaxy uses environment variables for LLM configuration. It is compatible with any OpenAI-compatible API (OpenAI, DeepSeek, local models, etc.):
+### 2. Configure
 
 ```bash
 export OPENAI_API_KEY="your-api-key"
@@ -53,9 +76,9 @@ export OPENAI_API_KEY="your-api-key"
 # export OPENAI_API_BASE="https://api.deepseek.com/v1"
 ```
 
-### 3. Data Preparation
+### 3. Prepare Data
 
-Download the BIRD and/or Spider datasets and place them under the `data/` directory:
+Download [BIRD](https://bird-bench.github.io/) and/or [Spider](https://yale-lily.github.io/spider) datasets:
 
 ```
 data/
@@ -63,93 +86,182 @@ data/
 │   ├── dev.json
 │   ├── dev_tables.json
 │   └── dev_databases/
-│       ├── california_schools/
-│       │   └── california_schools.sqlite
-│       └── ...
+│       └── <db_id>/<db_id>.sqlite
 └── spider/
     ├── dev.json
     ├── tables.json
     └── database/
-        ├── concert_singer/
-        │   └── concert_singer.sqlite
-        └── ...
+        └── <db_id>/<db_id>.sqlite
 ```
 
-The `data/` directory is excluded from version control via `.gitignore`.
-
-## Usage
-
-### Run on BIRD dev set
+### 4. Run
 
 ```bash
+# BIRD dev set
 mkdir -p outputs/bird_dev
+python run.py --dataset_name bird \
+  --dataset_mode dev \
+  --input_file ./data/bird/dev.json \
+  --db_path ./data/bird/dev_databases \
+  --tables_json_path ./data/bird/dev_tables.json \
+  --output_file ./outputs/bird_dev/output_bird.json \
+  --log_file ./outputs/bird_dev/log.txt
 
-python run.py --dataset_name "bird" \
-  --dataset_mode="dev" \
-  --input_file "./data/bird/dev.json" \
-  --db_path "./data/bird/dev_databases" \
-  --tables_json_path "./data/bird/dev_tables.json" \
-  --output_file "./outputs/bird_dev/output_bird.json" \
-  --log_file "./outputs/bird_dev/log.txt"
+# Spider dev set
+mkdir -p outputs/spider_dev
+python run.py --dataset_name spider \
+  --dataset_mode dev \
+  --input_file ./data/spider/dev.json \
+  --db_path ./data/spider/database \
+  --tables_json_path ./data/spider/tables.json \
+  --output_file ./outputs/spider_dev/output_spider.json \
+  --log_file ./outputs/spider_dev/log.txt
 ```
 
-### Run on Spider dev set
+### 5. Evaluate
 
 ```bash
-mkdir -p outputs/spider_dev
-
-python run.py --dataset_name "spider" \
-  --dataset_mode="dev" \
-  --input_file "./data/spider/dev.json" \
-  --db_path "./data/spider/database" \
-  --tables_json_path "./data/spider/tables.json" \
-  --output_file "./outputs/spider_dev/output_spider.json" \
-  --log_file "./outputs/spider_dev/log.txt"
+# BIRD EX + VES evaluation
+bash evaluation_bird_ex_ves.sh
 ```
 
-### Options
+---
 
-| Argument | Description |
-|----------|-------------|
-| `--dataset_name` | `bird` or `spider` |
-| `--dataset_mode` | `dev`, `test`, or `train` |
-| `--input_file` | Path to the dataset JSON file |
-| `--db_path` | Path to the database directory |
-| `--tables_json_path` | Path to the schema description file |
-| `--output_file` | Path for output results (supports resume) |
-| `--log_file` | Path for detailed logs |
-| `--start_pos` | Resume from a specific position (default: 0) |
-| `--without_selector` | Skip schema pruning |
+## Self-Evolving Skill Discovery
 
-The program supports **checkpoint resume** — if interrupted, re-run the same command and it will skip already completed items.
+The core innovation of SQL-Evolve: **automatically distill reusable strategies from wrong answers**.
+
+### How It Works
+
+1. **Run baseline** — Execute the pipeline on a dataset, collect all wrong answers
+2. **Analyze errors** — Classify each error (wrong JOIN, wrong aggregation, etc.) and locate which stage caused it
+3. **Match skills** — Check if any existing skill already covers the error pattern
+4. **Create skills** — For unmatched errors, group by pattern and call a reasoning model to propose generalizable strategies
+5. **Merge & Eliminate** — Periodically merge overlapping skills; eliminate low-effectiveness ones when limits are reached
+6. **Re-run with skills** — Inject skills into prompts and re-run to verify improvement
+
+### Run the Evolve Loop
+
+```bash
+# Step 1: Analyze errors from existing results (no LLM calls)
+python -m evosql.runner \
+  --eval-result ./outputs/bird_dev/eval_result_dev.json \
+  --output-jsonl ./outputs/bird_dev/output_bird.json \
+  --skill-dir ./evosql/skills \
+  --dry-run
+
+# Step 2: Generate skills (calls reasoning model)
+python -m evosql.runner \
+  --eval-result ./outputs/bird_dev/eval_result_dev.json \
+  --output-jsonl ./outputs/bird_dev/output_bird.json \
+  --skill-dir ./evosql/skills \
+  --merge-threshold 8
+```
+
+### Skill Example
+
+Each skill is a Markdown file with YAML metadata, stored in `evosql/skills/<stage>/`:
+
+```markdown
+---
+name: multi_table_join
+summary: Verify foreign key path completeness for multi-table JOINs
+keywords: [join, foreign key, multi-table, inner join]
+stage: decomposer
+stats:
+  match_count: 47
+  help_count: 31
+  effectiveness: 0.66
+---
+
+## Rules
+
+1. Before writing JOINs, trace the complete foreign key path between all required tables
+2. Every JOIN must have an explicit ON condition — never use implicit comma-separated tables
+3. Prefer INNER JOIN; use LEFT JOIN only when unmatched rows must be preserved
+
+## Examples
+
+❌ SELECT ... FROM A, B, C WHERE A.id = B.id
+✅ SELECT ... FROM A JOIN B ON A.id = B.id JOIN C ON B.cid = C.id
+```
+
+---
+
+## CLI Reference
+
+
+| Argument             | Description                     | Default |
+| -------------------- | ------------------------------- | ------- |
+| `--dataset_name`     | `bird` or `spider`              | —       |
+| `--dataset_mode`     | `dev`, `test`, or `train`       | `dev`   |
+| `--input_file`       | Path to dataset JSON            | —       |
+| `--db_path`          | Path to database directory      | —       |
+| `--tables_json_path` | Path to schema description file | —       |
+| `--output_file`      | Output path (supports resume)   | —       |
+| `--log_file`         | Detailed log path               | —       |
+| `--start_pos`        | Resume from position N          | `0`     |
+| `--without_selector` | Skip schema pruning             | off     |
+| `--use_gold_schema`  | Use gold schema (BIRD ablation) | off     |
+
+
+---
 
 ## Project Structure
 
 ```
-SQLaxy/
-├── core/
-│   ├── state.py        # SQLaxyState (TypedDict) — shared state definition
-│   ├── graph.py        # LangGraph StateGraph construction (build_graph)
-│   ├── agents.py       # Selector, Decomposer, Refiner agent logic
-│   ├── llm.py          # LLM API wrapper (langchain-openai ChatOpenAI)
-│   ├── const.py        # Prompt templates and constants
-│   └── utils.py        # Parsing and utility functions
-├── evaluation/         # Evaluation scripts (EX, VES)
-├── scripts/            # SQLite execution demo (Flask)
-├── data/               # Datasets (excluded from git)
-├── outputs/            # Run outputs (excluded from git)
-├── run.py              # Main entry point
-├── requirements.txt    # Python dependencies
-└── LICENSE             # Apache 2.0
+SQL-Evolve/
+├── core/                  # Three-agent pipeline
+│   ├── state.py           # SQLaxyState — shared state definition
+│   ├── graph.py           # LangGraph StateGraph construction
+│   ├── agents.py          # Selector, Decomposer, Refiner logic
+│   ├── llm.py             # LLM API wrapper (OpenAI-compatible)
+│   ├── const.py           # Prompt templates and constants
+│   └── utils.py           # SQL parsing and utilities
+├── evosql/                # Self-evolving skill discovery
+│   ├── config.py          # Evolution parameters
+│   ├── error_analyzer.py  # Error classification & root cause analysis
+│   ├── skill_manager.py   # Skill CRUD, stats, merge, eliminate
+│   ├── skill_matcher.py   # Zero-cost keyword matching
+│   ├── proposer.py        # Reasoning model integration
+│   ├── generator.py       # Skill file generation
+│   ├── runner.py          # Evolution loop orchestration
+│   ├── prompt_injector.py # Two-layer skill loading
+│   └── skills/            # Skill library (per-stage)
+│       ├── selector/
+│       ├── decomposer/
+│       └── refiner/
+├── evaluation/            # BIRD (EX/VES) & Spider evaluation
+├── scripts/               # Flask demo for SQL execution
+├── run.py                 # Main entry point
+├── requirements.txt
+└── LICENSE                # Apache 2.0
 ```
+
+---
 
 ## Acknowledgements
 
-SQLaxy is built upon and inspired by the following projects:
+SQL-Evolve builds upon the following projects:
 
-- **[MAC-SQL](https://github.com/wbbeyourself/MAC-SQL)** — The multi-agent collaborative Text-to-SQL framework (COLING 2025) that SQLaxy is forked from. We gratefully acknowledge the original authors for their foundational work on the Selector-Decomposer-Refiner architecture.
+- **[MAC-SQL](https://github.com/wbbeyourself/MAC-SQL)** — The multi-agent collaborative Text-to-SQL framework (COLING 2025). SQL-Evolve extends the Selector-Decomposer-Refiner architecture with self-evolving skill discovery.
+- **[LangGraph](https://github.com/langchain-ai/langgraph)** — The orchestration framework for building stateful agent workflows.
+- **[EvoSkill](https://github.com/sentient-agi/EvoSkill)** — Inspiration for the evolutionary skill discovery paradigm.
 
-- **[LangGraph](https://github.com/langchain-ai/langgraph)** — The low-level orchestration framework for building stateful agents. SQLaxy uses LangGraph's `StateGraph` for agent workflow management, conditional routing, and state persistence.
+---
+
+## Citation
+
+If you find SQL-Evolve useful, please consider giving it a star and citing:
+
+```bibtex
+@software{sql_evolve_2025,
+  title  = {SQL-Evolve: Distilling Skills from Errors for Self-Evolving Text-to-SQL},
+  author = {Yu-Feng Li},
+  year   = {2026},
+  url    = {https://github.com/stulyf/SQLaxy},
+}
+```
 
 ## License
 

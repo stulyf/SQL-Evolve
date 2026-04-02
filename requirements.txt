@@ -10,3 +10,6 @@ tiktoken
 tqdm
 nltk
 flask
+# EvoSQL dependencies
+pyyaml
+openai
