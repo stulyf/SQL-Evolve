@@ -1,4 +1,4 @@
-"""Main runner: orchestrates the Round 1 offline error analysis and skill construction."""
+"""Main runner: orchestrates offline error analysis, skill construction, and feedback."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from .skill_manager import SkillManager
 from .skill_matcher import match_all_errors
 from .proposer import propose_skill, propose_merge
 from .generator import generate_skill, apply_merge
+from .feedback import collect_feedback, print_feedback_report
 
 
 def _log(phase: str, msg: str = "") -> None:
@@ -173,37 +174,85 @@ def _run_merge(manager: SkillManager, stage: str) -> None:
         _log("MERGE", f"    Merged {valid_names} → {merged.name}")
 
 
+def run_feedback(
+    baseline_eval_path: str,
+    enhanced_eval_path: str,
+    enhanced_output_path: str,
+    skill_dir: str,
+    round_id: str = "round_2",
+) -> None:
+    """Execute feedback collection: compare baseline vs enhanced, update skill stats."""
+    _log("FEEDBACK", "Starting feedback collection")
+    _log("FEEDBACK", f"  baseline_eval: {baseline_eval_path}")
+    _log("FEEDBACK", f"  enhanced_eval: {enhanced_eval_path}")
+    _log("FEEDBACK", f"  enhanced_output: {enhanced_output_path}")
+    _log("FEEDBACK", f"  skill_dir: {skill_dir}")
+    _log("FEEDBACK", f"  round_id: {round_id}")
+
+    manager = SkillManager(skill_dir)
+    _log("FEEDBACK", f"  Loaded {len(manager.all_skills())} skills")
+
+    stats = collect_feedback(
+        baseline_eval_path=baseline_eval_path,
+        enhanced_eval_path=enhanced_eval_path,
+        enhanced_output_path=enhanced_output_path,
+        manager=manager,
+        round_id=round_id,
+    )
+
+    report = print_feedback_report(stats)
+    report_path = Path(skill_dir) / f"{round_id}_feedback_report.txt"
+    report_path.write_text(report, encoding="utf-8")
+    _log("FEEDBACK", f"  Report saved to {report_path}")
+
+    eliminated = manager.eliminate()
+    if eliminated:
+        _log("FEEDBACK", f"  Eliminated {len(eliminated)} low-performing skills: {eliminated}")
+
+    _log("FEEDBACK", "Feedback collection complete!")
+    print("\n" + manager.export_report())
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="EvoSQL Round 1: offline skill construction")
-    parser.add_argument(
-        "--eval-result", required=True,
-        help="Path to eval_result_dev.json",
-    )
-    parser.add_argument(
-        "--output-jsonl", required=True,
-        help="Path to output_bird.json (JSONL)",
-    )
-    parser.add_argument(
-        "--skill-dir", default="./evosql/skills",
-        help="Directory to store generated skills",
-    )
-    parser.add_argument(
-        "--merge-threshold", type=int, default=MERGE_THRESHOLD,
-        help=f"New skills before triggering merge (default: {MERGE_THRESHOLD})",
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Only run error analysis, skip LLM calls",
-    )
+    parser = argparse.ArgumentParser(description="EvoSQL: offline skill construction and feedback")
+    subparsers = parser.add_subparsers(dest="command", help="sub-command help")
+
+    p_round1 = subparsers.add_parser("round1", help="Round 1: error analysis + skill generation")
+    p_round1.add_argument("--eval-result", required=True, help="Path to eval_result_dev.json")
+    p_round1.add_argument("--output-jsonl", required=True, help="Path to output_bird.json (JSONL)")
+    p_round1.add_argument("--skill-dir", default="./evosql/skills", help="Directory to store generated skills")
+    p_round1.add_argument("--merge-threshold", type=int, default=MERGE_THRESHOLD,
+                          help=f"New skills before triggering merge (default: {MERGE_THRESHOLD})")
+    p_round1.add_argument("--dry-run", action="store_true", help="Only run error analysis, skip LLM calls")
+
+    p_feedback = subparsers.add_parser("feedback", help="Collect feedback from enhanced run")
+    p_feedback.add_argument("--baseline-eval", required=True, help="Path to baseline eval_result_dev.json")
+    p_feedback.add_argument("--enhanced-eval", required=True, help="Path to enhanced eval_result_dev.json")
+    p_feedback.add_argument("--enhanced-output", required=True, help="Path to enhanced output_bird.json (JSONL)")
+    p_feedback.add_argument("--skill-dir", default="./evosql/skills", help="Directory with skill files")
+    p_feedback.add_argument("--round-id", default="round_2", help="Round identifier (default: round_2)")
+
     args = parser.parse_args()
 
-    run_round1(
-        eval_result_path=args.eval_result,
-        output_jsonl_path=args.output_jsonl,
-        skill_dir=args.skill_dir,
-        merge_threshold=args.merge_threshold,
-        dry_run=args.dry_run,
-    )
+    if args.command == "round1" or args.command is None:
+        if args.command is None:
+            parser.print_help()
+            sys.exit(1)
+        run_round1(
+            eval_result_path=args.eval_result,
+            output_jsonl_path=args.output_jsonl,
+            skill_dir=args.skill_dir,
+            merge_threshold=args.merge_threshold,
+            dry_run=args.dry_run,
+        )
+    elif args.command == "feedback":
+        run_feedback(
+            baseline_eval_path=args.baseline_eval,
+            enhanced_eval_path=args.enhanced_eval,
+            enhanced_output_path=args.enhanced_output,
+            skill_dir=args.skill_dir,
+            round_id=args.round_id,
+        )
 
 
 if __name__ == "__main__":

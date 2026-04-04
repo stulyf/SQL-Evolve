@@ -576,14 +576,21 @@ class Selector:
         }
 
 
-def decomposer_process(state: SQLaxyState, dataset_name: str) -> dict:
+def decomposer_process(state: SQLaxyState, dataset_name: str, skill_manager=None) -> dict:
     query = state.get("query")
     evidence = state.get("evidence")
     schema_info = state.get("desc_str")
     fk_info = state.get("fk_str")
 
     if dataset_name == "bird":
-        prompt = decompose_template_bird.format(
+        template = decompose_template_bird
+        if skill_manager:
+            from evosql.prompt_injector import inject_skills_into_prompt
+            template = inject_skills_into_prompt(
+                template, skill_manager, "decomposer",
+                question=query, schema_text=f"{query} {evidence} {schema_info}",
+            )
+        prompt = template.format(
             query=query, desc_str=schema_info, fk_str=fk_info, evidence=evidence
         )
     else:
@@ -670,11 +677,22 @@ class _RefinerCore:
         schema_info: str,
         fk_info: str,
         error_info: dict,
+        skill_manager=None,
     ) -> str:
         sql_arg = add_prefix(error_info.get("sql"))
         sqlite_error = error_info.get("sqlite_error")
         exception_class = error_info.get("exception_class")
-        prompt = refiner_template.format(
+
+        template = refiner_template
+        if skill_manager:
+            from evosql.prompt_injector import inject_skills_into_prompt
+            template = inject_skills_into_prompt(
+                template, skill_manager, "refiner",
+                question=query, schema_text=schema_info,
+                error_text=f"{sqlite_error} {exception_class}",
+            )
+
+        prompt = template.format(
             query=query,
             evidence=evidence,
             desc_str=schema_info,
@@ -690,7 +708,23 @@ class _RefinerCore:
         return res
 
 
-def refiner_process(state: SQLaxyState, data_path: str, dataset_name: str) -> dict:
+def _semantic_sanity_check(data: list, query: str) -> str:
+    """Heuristic check for suspicious results that might indicate semantic errors."""
+    query_lower = query.lower()
+    if not data:
+        return ""
+    row_count = len(data)
+    has_count_query = any(w in query_lower for w in ["how many", "count", "number of", "total"])
+    if has_count_query and row_count == 1 and len(data[0]) == 1:
+        val = data[0][0]
+        if val == 0:
+            return "COUNT result is 0 — verify this is correct given the question"
+    if row_count > 100 and not any(w in query_lower for w in ["all", "list", "every"]):
+        return f"Query returned {row_count} rows — verify the result is not too broad"
+    return ""
+
+
+def refiner_process(state: SQLaxyState, data_path: str, dataset_name: str, skill_manager=None) -> dict:
     core = _RefinerCore(data_path, dataset_name)
     db_id = state.get("db_id")
     old_sql = state.get("pred") or state.get("final_sql", "")
@@ -727,6 +761,16 @@ def refiner_process(state: SQLaxyState, data_path: str, dataset_name: str) -> di
         }
 
     is_need = core._is_need_refine(error_info)
+
+    if not is_need and try_times == 0:
+        data = error_info.get("data", [])
+        hint = _semantic_sanity_check(data, query)
+        if hint:
+            print(f"  [SemanticCheck] {hint}")
+            error_info["sqlite_error"] = hint
+            error_info["exception_class"] = "SemanticWarning"
+            is_need = True
+
     if not is_need:
         return {
             "try_times": try_times + 1,
@@ -735,7 +779,7 @@ def refiner_process(state: SQLaxyState, data_path: str, dataset_name: str) -> di
             "need_refine": False,
         }
 
-    new_sql = core._refine(state, query, evidence, schema_info, fk_info, error_info)
+    new_sql = core._refine(state, query, evidence, schema_info, fk_info, error_info, skill_manager=skill_manager)
     return {
         "try_times": try_times + 1,
         "pred": new_sql,

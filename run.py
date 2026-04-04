@@ -89,13 +89,14 @@ def init_bird_message(idx: int, item: dict, db_path: str=None, use_gold_schema: 
     return user_message
 
 
-def run_batch(dataset_name, input_file, output_file, db_path, tables_json_path, start_pos=0, log_file=None, dataset_mode='dev', use_gold_schema=False, without_selector=False):
+def run_batch(dataset_name, input_file, output_file, db_path, tables_json_path, start_pos=0, log_file=None, dataset_mode='dev', use_gold_schema=False, without_selector=False, skill_dir=None):
     app = build_graph(
         data_path=db_path,
         tables_json_path=tables_json_path,
         dataset_name=dataset_name,
         log_path=log_file or None,
         without_selector=without_selector,
+        skill_dir=skill_dir,
     )
     # load dataset
     batch = load_json_file(input_file)
@@ -219,6 +220,7 @@ if __name__ == "__main__":
     parser.add_argument('--start_pos', type=int, default=0, help='start position of a batch')
     parser.add_argument('--use_gold_schema', action='store_true', default=False)
     parser.add_argument('--without_selector', action='store_true', default=False)
+    parser.add_argument('--skill_dir', type=str, default=None, help='path to evosql skills directory (enables skill injection)')
     args = parser.parse_args()
     # 打印args中的键值对
     for key, value in vars(args).items():
@@ -241,5 +243,6 @@ if __name__ == "__main__":
         log_file=args.log_file,
         start_pos=args.start_pos,
         use_gold_schema=args.use_gold_schema,
-        without_selector=args.without_selector
+        without_selector=args.without_selector,
+        skill_dir=args.skill_dir,
     )

@@ -88,6 +88,27 @@ def _extract_join_count(sql_upper: str) -> int:
     return len(re.findall(r"\bJOIN\b", sql_upper))
 
 
+def _extract_select_columns(sql_upper: str) -> list[str]:
+    """Extract column expressions from the SELECT clause."""
+    m = re.search(r"\bSELECT\s+(.*?)\s+FROM\b", sql_upper, re.DOTALL)
+    if not m:
+        return []
+    cols_str = m.group(1)
+    cols = [c.strip() for c in cols_str.split(",")]
+    return cols
+
+
+def _extract_where_conditions(sql_upper: str) -> str:
+    """Extract the WHERE clause content."""
+    m = re.search(r"\bWHERE\s+(.*?)(?:\bGROUP\b|\bORDER\b|\bLIMIT\b|\bHAVING\b|$)", sql_upper, re.DOTALL)
+    return m.group(1).strip() if m else ""
+
+
+def _extract_aggregation_funcs(sql_upper: str) -> list[str]:
+    """Extract aggregation function calls."""
+    return re.findall(r"\b(COUNT|SUM|AVG|MAX|MIN)\s*\([^)]*\)", sql_upper)
+
+
 def _classify_clause_errors(pred_upper: str, gold_upper: str) -> list[ErrorPoint]:
     """Compare predicted vs gold SQL clause by clause and produce error points."""
     points: list[ErrorPoint] = []
@@ -197,6 +218,9 @@ def _classify_clause_errors(pred_upper: str, gold_upper: str) -> list[ErrorPoint
             ))
 
     if not points:
+        points.extend(_deep_semantic_analysis(pred_upper, gold_upper))
+
+    if not points:
         points.append(ErrorPoint(
             clause="SELECT",
             error_type="semantic_mismatch",
@@ -205,6 +229,61 @@ def _classify_clause_errors(pred_upper: str, gold_upper: str) -> list[ErrorPoint
         ))
 
     _assign_primary(points)
+    return points
+
+
+def _deep_semantic_analysis(pred_upper: str, gold_upper: str) -> list[ErrorPoint]:
+    """Fine-grained analysis for cases where structural checks find nothing."""
+    points: list[ErrorPoint] = []
+
+    pred_cols = _extract_select_columns(pred_upper)
+    gold_cols = _extract_select_columns(gold_upper)
+    if pred_cols != gold_cols:
+        points.append(ErrorPoint(
+            clause="SELECT",
+            error_type="wrong_select",
+            is_primary=False,
+            detail=f"SELECT columns differ: pred={pred_cols[:3]}, gold={gold_cols[:3]}",
+        ))
+
+    pred_where = _extract_where_conditions(pred_upper)
+    gold_where = _extract_where_conditions(gold_upper)
+    if pred_where != gold_where and (pred_where or gold_where):
+        detail_parts = []
+        if not pred_where:
+            detail_parts.append("pred missing WHERE conditions")
+        elif not gold_where:
+            detail_parts.append("pred has extra WHERE conditions")
+        else:
+            detail_parts.append(f"WHERE conditions differ")
+        points.append(ErrorPoint(
+            clause="WHERE",
+            error_type="wrong_filter",
+            is_primary=False,
+            detail="; ".join(detail_parts),
+        ))
+
+    pred_aggs = _extract_aggregation_funcs(pred_upper)
+    gold_aggs = _extract_aggregation_funcs(gold_upper)
+    if sorted(pred_aggs) != sorted(gold_aggs):
+        points.append(ErrorPoint(
+            clause="SELECT",
+            error_type="wrong_aggregation",
+            is_primary=False,
+            detail=f"aggregation functions differ: pred={pred_aggs}, gold={gold_aggs}",
+        ))
+
+    pred_has_distinct = "DISTINCT" in pred_upper
+    gold_has_distinct = "DISTINCT" in gold_upper
+    if pred_has_distinct != gold_has_distinct:
+        detail = "missing DISTINCT" if gold_has_distinct else "unnecessary DISTINCT"
+        points.append(ErrorPoint(
+            clause="SELECT",
+            error_type="wrong_select",
+            is_primary=False,
+            detail=detail,
+        ))
+
     return points
 
 
