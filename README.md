@@ -1,5 +1,3 @@
-
-
 # SQL-Evolve
 
 **Distilling Skills from Errors — A Self-Evolving Multi-Agent Text-to-SQL System**
@@ -9,8 +7,6 @@
 [LangGraph](https://github.com/langchain-ai/langgraph)
 
 [English](./README.md) | [中文](./README_CN.md)
-
-
 
 ---
 
@@ -33,25 +29,33 @@ SQL-Evolve is a multi-agent Text-to-SQL system that **learns from its own mistak
 
 ### BIRD-dev (EX Accuracy)
 
-
-| Difficulty  | Correct / Total | Accuracy  |
-| ----------- | --------------- | --------- |
-| Simple      | 606 / 925       | 65.5%     |
-| Moderate    | 237 / 465       | 51.0%     |
-| Challenging | 71 / 144        | 49.3%     |
-| **Overall** | **914 / 1534**  | **59.6%** |
+All numbers are **execution accuracy (EX)** on the full BIRD `dev` split (**1534** questions), using the same evaluation protocol as the official BIRD leaderboard (predicted SQL executed against the gold database; result sets must match).
 
 
-> Evaluated with `deepseek-chat` as the backbone LLM.
+| Setting             | Role                                                                                                     | Output directory (this repo)    |
+| ------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| **Baseline**        | Selector → Decomposer → Refiner, **no** injected skills                                                  | `outputs/bird_dev/`             |
+| **+ Skills (ours)** | Same pipeline with **error-driven skills** loaded into prompts (after distillation from baseline errors) | `outputs/bird_dev_with_skills/` |
+
+
+Both runs use `**deepseek-chat`** as the backbone LLM and the same data paths as in [Quick Start](#4-run). Metrics are aggregated from `eval_result_dev.json` in each output folder (`res == 1` counts as correct).
+
+
+| Difficulty  | Baseline (correct / total) | Baseline   | + Skills (correct / total) | + Skills   | Δ (pp)    |
+| ----------- | -------------------------- | ---------- | -------------------------- | ---------- | --------- |
+| Simple      | 606 / 925                  | 65.51%     | 624 / 925                  | 67.46%     | **+1.95** |
+| Moderate    | 237 / 465                  | 50.97%     | 244 / 465                  | 52.47%     | **+1.50** |
+| Challenging | 71 / 144                   | 49.31%     | 72 / 144                   | 50.00%     | **+0.69** |
+| **Overall** | **914 / 1534**             | **59.58%** | **940 / 1534**             | **61.28%** | **+1.70** |
+
+
+
 
 ---
 
 ## Architecture
 
-<p align="center">
-  <img src="./assets/SQL-Evolve.png" alt="SQL-Evolve Architecture" width="90%">
-</p>
-
+![SQL-Evolve Architecture](./assets/SQL-Evolve.png)
 
 ---
 

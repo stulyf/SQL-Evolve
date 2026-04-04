@@ -1,0 +1,19 @@
+Skill Library Report
+============================================================
+
+Decomposer (7/12):
+  [validate_attribute_table_mapping]  match:0  help:0  harm:0  eff:0.00  score:0.00 (unused)
+  [prefer_join_for_extreme_values]  match:0  help:0  harm:0  eff:0.00  score:0.00 (unused)
+  [minimal_table_join_strategy]  match:0  help:0  harm:0  eff:0.00  score:0.00 (unused)
+  [prefer_order_by_limit_over_subquery]  match:0  help:0  harm:0  eff:0.00  score:0.00 (unused)
+  [correct_aggregation_usage]  match:0  help:0  harm:0  eff:0.00  score:0.00 (unused)
+  [order_by_for_ranking_queries]  match:0  help:0  harm:0  eff:0.00  score:0.00 (unused)
+  [avoid_unnecessary_ordering_or_limiting]  match:0  help:0  harm:0  eff:0.00  score:0.00 (unused)
+
+Refiner (0/8):
+
+Selector (2/8):
+  [complete_table_selection_via_attribute_mapping]  match:0  help:0  harm:0  eff:0.00  score:0.00 (unused)
+  [accurate_join_selection]  match:0  help:0  harm:0  eff:0.00  score:0.00 (unused)
+
+Total Skills: 9/28

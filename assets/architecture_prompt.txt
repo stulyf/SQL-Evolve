@@ -1,0 +1,70 @@
+请根据以下描述生成一张专业的系统架构图，风格为科技论文/开源项目常用的扁平化流程图，背景为白色，配色为蓝色系（主色 #2563EB，辅助 #60A5FA，强调 #F59E0B）。
+
+=== 架构描述 ===
+
+项目名称：SQL-Evolve
+副标题：Distilling Skills from Errors — A Self-Evolving Multi-Agent Text-to-SQL System
+
+整体分为两大部分：上方是主流水线（Pipeline），下方是进化循环（Evolve Loop），二者通过 Skill Library 连接。
+
+【主流水线 — 从左到右】
+
+输入（左侧）：
+- "Natural Language Question" 图标（问号气泡或文本框）
+- "Database Schema" 图标（数据库圆柱）
+
+三个智能体节点（从左到右，用圆角矩形表示，蓝色渐变）：
+1. Selector — 图标：剪刀/过滤器，文字 "Schema Pruning"
+2. Decomposer — 图标：拆分/树状，文字 "CoT SQL Generation"  
+3. Refiner — 图标：循环箭头，文字 "Execution & Error Fix"
+
+Refiner 有一个自循环箭头（标注 "retry if error"，最多3次）
+
+输出（右侧）：
+- "SQL Query" 图标（代码块）
+
+三个节点之间用实线箭头连接，箭头上无标注。
+
+【Skill Library — 中间层】
+
+在三个智能体下方，有一个横向的长条矩形，标注 "Skill Library"
+内部分三个小格子：
+- Selector Skills (≤8)
+- Decomposer Skills (≤12)
+- Refiner Skills (≤8)
+
+从 Skill Library 向上有三条虚线箭头，分别指向三个智能体，标注 "inject skills"
+
+【进化循环 — 底部，用浅黄色/橙色背景区分】
+
+从左到右的流程：
+1. "Wrong Answers" （红色 × 标记）
+2. → "Error Analyzer" （放大镜图标）标注 "classify & split error points"
+3. → "Group by Pattern" （分组图标）
+4. → "Proposer" （大脑/灯泡图标，标注 "reasoning model"）
+5. → "Generator" （文件生成图标，标注 "SKILL.md"）
+6. → "Skill Library" （向上箭头回到中间层）
+
+在 Proposer 和 Skill Library 之间，还有一个分支：
+- "Merge / Eliminate" （合并+垃圾桶图标）
+
+整体布局：
+- 主流水线在上方（占 40% 高度）
+- Skill Library 横条在中间
+- 进化循环在下方（占 35% 高度）
+- 留白适当
+
+字体：Sans-serif（推荐 Inter 或 Source Sans Pro）
+所有文字为英文
+图片尺寸：1600 x 900 px
+输出格式：PNG（无水印）
+
+=== 配色参考 ===
+主色调：#2563EB（蓝色）
+辅助色：#60A5FA（浅蓝）
+强调色：#F59E0B（橙黄）
+错误标记：#EF4444（红色）
+背景：#FFFFFF（白色）
+文字：#1F2937（深灰）
+边框/线条：#D1D5DB（浅灰）
+进化循环背景：#FFF7ED（极浅橙）

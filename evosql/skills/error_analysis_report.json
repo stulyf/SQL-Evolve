@@ -1,0 +1,37 @@
+{
+  "summary": {
+    "total_errors": 620,
+    "by_stage": {
+      "decomposer": 559,
+      "selector": 61
+    },
+    "by_primary_error_type": {
+      "wrong_join": 212,
+      "wrong_table": 205,
+      "semantic_mismatch": 202,
+      "wrong_subquery": 69,
+      "wrong_aggregation": 45,
+      "wrong_filter": 37,
+      "wrong_order": 11
+    },
+    "by_difficulty": {
+      "simple": 319,
+      "moderate": 228,
+      "challenging": 73
+    }
+  },
+  "groups": {
+    "decomposer_wrong_join": 181,
+    "decomposer_semantic_mismatch": 200,
+    "decomposer_wrong_table": 150,
+    "decomposer_wrong_filter": 37,
+    "decomposer_wrong_subquery": 68,
+    "decomposer_wrong_aggregation": 44,
+    "selector_wrong_table": 55,
+    "selector_wrong_join": 31,
+    "decomposer_wrong_order": 11,
+    "selector_semantic_mismatch": 2,
+    "selector_wrong_aggregation": 1,
+    "selector_wrong_subquery": 1
+  }
+}
