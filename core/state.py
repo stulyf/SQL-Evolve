@@ -28,3 +28,6 @@ class SQLaxyState(TypedDict):
     fixed: bool
     try_times: int
     need_refine: bool
+
+    # Skill injection context (progressive mode)
+    skill_context: dict

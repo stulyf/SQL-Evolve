@@ -10,6 +10,19 @@ PROPOSER_API_BASE = os.getenv("EVOSQL_PROPOSER_API_BASE", "https://api.deepseek.
 GENERATOR_API_BASE = os.getenv("EVOSQL_GENERATOR_API_BASE", "https://api.deepseek.com/v1")
 API_KEY = os.getenv("OPENAI_API_KEY", "")
 
+SKILL_SELECTOR_MODEL = os.getenv("EVOSQL_SKILL_SELECTOR_MODEL", "deepseek-chat")
+SKILL_SELECTOR_API_BASE = os.getenv("EVOSQL_SKILL_SELECTOR_API_BASE", PROPOSER_API_BASE)
+
+USE_PROGRESSIVE_INJECTION = os.getenv("EVOSQL_USE_PROGRESSIVE_INJECTION", "0") == "1"
+
+SKILL_TOKEN_BUDGET = int(os.getenv("EVOSQL_SKILL_TOKEN_BUDGET", "800"))
+
+SKILL_MAX_INJECT = {
+    "selector": 2,
+    "decomposer": 3,
+    "refiner": 2,
+}
+
 SKILL_LIMITS = {
     "selector": 8,
     "decomposer": 12,

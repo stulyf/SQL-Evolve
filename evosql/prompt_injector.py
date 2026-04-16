@@ -1,13 +1,16 @@
-"""Prompt injector: two-layer skill loading for SQLaxy prompt enhancement.
+"""Prompt injector: progressive skill injection for SQLaxy prompt enhancement.
 
-Dynamically selects relevant skills and injects them into prompt templates
-during inference (Round 2+).
+Supports two modes controlled by config.USE_PROGRESSIVE_INJECTION:
+  - Legacy mode (default): keyword-overlap matching + direct full-text injection
+  - Progressive mode: 3-layer injection (registry index → LLM selection → budget-aware injection)
 """
 
 from __future__ import annotations
 
+import json
+import os
 import re
-from pathlib import Path
+from typing import Optional
 
 from .skill_manager import SkillManager, Skill
 from .skill_matcher import _tokenize_text
@@ -29,19 +32,239 @@ MIN_OVERLAP_THRESHOLD = 2
 MIN_EFFECTIVENESS_FOR_ESTABLISHED = 0.3
 MIN_MATCHES_TO_JUDGE = 5
 
+CHARS_PER_TOKEN_ESTIMATE = 4
+
+
+# ---------------------------------------------------------------------------
+# Layer 1: Registry Index
+# ---------------------------------------------------------------------------
 
 def build_registry_block(manager: SkillManager, stage: str) -> str:
-    """Build the lightweight registry index for a stage (~20-30 tokens/skill)."""
+    """Build the lightweight registry index for a stage (~20-30 tokens/skill).
+
+    Only includes eligible skills (not proven harmful / ineffective).
+    """
     skills = manager.skills_by_stage(stage)
     if not skills:
         return ""
 
+    eligible = [s for s in skills if _is_skill_eligible(s)]
+    if not eligible:
+        return ""
+
     lines = [f"[Available {stage} skills]"]
-    for i, s in enumerate(skills, 1):
+    for i, s in enumerate(eligible, 1):
         kws = ", ".join(s.keywords[:5])
         lines.append(f"{i}. {s.name}: {s.summary} | {kws}")
     return "\n".join(lines)
 
+
+# ---------------------------------------------------------------------------
+# Layer 2: LLM-based Skill Selection
+# ---------------------------------------------------------------------------
+
+def select_skills_via_llm(
+    registry_block: str,
+    question: str,
+    schema_text: str = "",
+    error_text: str = "",
+    context_from_prev_stage: Optional[dict] = None,
+    max_select: int = 3,
+) -> list[str]:
+    """Use a lightweight LLM call to pick the most relevant skills from the registry.
+
+    Returns a list of skill names (strings).
+    """
+    from .skill_selector_prompt import build_skill_selector_prompt
+    from . import config
+
+    prev_skills: list[str] = []
+    if context_from_prev_stage:
+        prev_skills = context_from_prev_stage.get("selected_skills", [])
+
+    schema_summary = schema_text[:600] if schema_text else ""
+
+    prompt = build_skill_selector_prompt(
+        question=question,
+        schema_summary=schema_summary,
+        registry_block=registry_block,
+        max_select=max_select,
+        error_text=error_text,
+        prev_stage_skills=prev_skills if prev_skills else None,
+    )
+
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import HumanMessage
+
+    llm = ChatOpenAI(
+        model=config.SKILL_SELECTOR_MODEL,
+        base_url=config.SKILL_SELECTOR_API_BASE,
+        api_key=config.API_KEY or os.getenv("OPENAI_API_KEY", ""),
+        temperature=0.0,
+        max_tokens=200,
+    )
+
+    try:
+        response = llm.invoke([HumanMessage(content=prompt)])
+        text = (response.content or "").strip()
+        selected = _parse_skill_names(text, max_select)
+        print(f"  [SkillSelector] LLM selected: {selected}", flush=True)
+        return selected
+    except Exception as e:
+        print(f"  [SkillSelector] LLM call failed ({e}), falling back to empty", flush=True)
+        return []
+
+
+def _parse_skill_names(text: str, max_select: int) -> list[str]:
+    """Extract a JSON array of skill names from LLM output, tolerant of formatting."""
+    match = re.search(r"\[.*?\]", text, re.DOTALL)
+    if not match:
+        return []
+    try:
+        parsed = json.loads(match.group())
+        if isinstance(parsed, list):
+            return [str(n).strip() for n in parsed if isinstance(n, str)][:max_select]
+    except json.JSONDecodeError:
+        pass
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Layer 3: Budget-aware Full Injection
+# ---------------------------------------------------------------------------
+
+def inject_with_budget(
+    template: str,
+    manager: SkillManager,
+    selected_names: list[str],
+    token_budget: int,
+) -> str:
+    """Inject selected skills' full body into the prompt template,
+    respecting a token budget. Skills exceeding the budget are reduced
+    to summary-only.
+    """
+    if not selected_names:
+        return template
+
+    skills = [manager.get_skill(n) for n in selected_names]
+    skills = [s for s in skills if s is not None]
+    if not skills:
+        return template
+
+    skills.sort(key=lambda s: -s.stats.effectiveness)
+
+    char_budget = token_budget * CHARS_PER_TOKEN_ESTIMATE
+    used_chars = 0
+
+    skill_block_parts = [
+        "【SQL Strategy Skills — follow these learned patterns to avoid common errors】"
+    ]
+
+    for skill in skills:
+        full_entry = f"\n### {skill.summary}\n{skill.body}"
+        summary_entry = f"\n### {skill.summary}\n(Skill content omitted due to budget)"
+
+        if used_chars + len(full_entry) <= char_budget:
+            skill_block_parts.append(full_entry)
+            used_chars += len(full_entry)
+        elif used_chars + len(summary_entry) <= char_budget:
+            skill_block_parts.append(summary_entry)
+            used_chars += len(summary_entry)
+        else:
+            break
+
+    if len(skill_block_parts) <= 1:
+        return template
+
+    skill_block = "\n".join(skill_block_parts)
+    return _insert_skill_block(template, skill_block)
+
+
+def _insert_skill_block(template: str, skill_block: str) -> str:
+    """Insert a skill block into a prompt template at the canonical position."""
+    marker = "【SQL Strategy Skills"
+    marker_pos = template.find(marker)
+    if marker_pos != -1:
+        marker_end = template.find("\n\n", marker_pos)
+        if marker_end == -1:
+            marker_end = len(template)
+        else:
+            marker_end += 1
+        return template[:marker_pos] + skill_block + "\n" + template[marker_end:]
+
+    first_placeholder = re.search(r"\{[a-z_]+\}", template)
+    if first_placeholder:
+        pos = first_placeholder.start()
+        return template[:pos] + skill_block + "\n\n" + template[pos:]
+
+    return skill_block + "\n\n" + template
+
+
+# ---------------------------------------------------------------------------
+# Progressive injection entry point (new API)
+# ---------------------------------------------------------------------------
+
+def inject_skills_progressive(
+    template: str,
+    manager: SkillManager,
+    stage: str,
+    question: str,
+    schema_text: str = "",
+    error_text: str = "",
+    max_skills: int | None = None,
+    token_budget: int | None = None,
+    context_from_prev_stage: Optional[dict] = None,
+) -> tuple[str, dict]:
+    """Three-layer progressive skill injection.
+
+    Layer 1: Build lightweight registry index
+    Layer 2: LLM selects relevant skills from registry
+    Layer 3: Inject selected skills' full text within token budget
+
+    Returns (injected_template, stage_context_dict).
+    """
+    from . import config
+
+    if max_skills is None:
+        max_skills = config.SKILL_MAX_INJECT.get(stage, 2)
+    if token_budget is None:
+        token_budget = config.SKILL_TOKEN_BUDGET
+
+    # Layer 1
+    registry = build_registry_block(manager, stage)
+    if not registry:
+        return template, {}
+
+    # Layer 2
+    selected_names = select_skills_via_llm(
+        registry, question, schema_text, error_text,
+        context_from_prev_stage,
+        max_select=max_skills,
+    )
+
+    if not selected_names:
+        return template, {}
+
+    # Layer 3
+    result_template = inject_with_budget(
+        template, manager, selected_names, token_budget,
+    )
+
+    prev_skills = []
+    if context_from_prev_stage:
+        prev_skills = list(context_from_prev_stage.get("selected_skills", []))
+    prev_skills.extend(selected_names)
+
+    stage_context = {
+        "selected_skills": prev_skills,
+        "stage": stage,
+    }
+    return result_template, stage_context
+
+
+# ---------------------------------------------------------------------------
+# Legacy API (backward-compatible)
+# ---------------------------------------------------------------------------
 
 def _is_skill_eligible(skill: Skill) -> bool:
     """Check if a skill has enough evidence of being helpful (or is still new)."""
@@ -62,13 +285,7 @@ def select_relevant_skills(
     error_text: str = "",
     top_k: int = 2,
 ) -> list[Skill]:
-    """Select the most relevant skills for a given question.
-
-    Filtering criteria:
-      1. Keyword overlap >= MIN_OVERLAP_THRESHOLD (after removing stop words)
-      2. Skill must be eligible (not proven harmful or ineffective)
-      3. Sorted by overlap count (desc), then effectiveness (desc)
-    """
+    """Legacy keyword-overlap skill selection (no LLM cost)."""
     candidates = manager.skills_by_stage(stage)
     if not candidates:
         return []
@@ -93,6 +310,31 @@ def select_relevant_skills(
     return [s for s, _, _ in scored[:top_k]]
 
 
+def _inject_skills_legacy(
+    template: str,
+    manager: SkillManager,
+    stage: str,
+    question: str,
+    schema_text: str = "",
+    error_text: str = "",
+    top_k: int = 2,
+) -> str:
+    """Original injection logic: keyword match → full-text paste."""
+    skills = select_relevant_skills(manager, stage, question, schema_text, error_text, top_k)
+    if not skills:
+        return template
+
+    skill_block_parts = [
+        "【SQL Strategy Skills — follow these learned patterns to avoid common errors】"
+    ]
+    for skill in skills:
+        skill_block_parts.append(f"\n### {skill.summary}\n")
+        skill_block_parts.append(skill.body)
+    skill_block = "\n".join(skill_block_parts)
+
+    return _insert_skill_block(template, skill_block)
+
+
 def inject_skills_into_prompt(
     template: str,
     manager: SkillManager,
@@ -102,35 +344,27 @@ def inject_skills_into_prompt(
     error_text: str = "",
     top_k: int = 2,
 ) -> str:
-    """Inject relevant skills into a SQLaxy prompt template.
+    """Public API — dispatches to progressive or legacy mode.
 
-    Looks for the marker ``【SQL Strategy Skills】`` in the template.
-    If present, replaces the entire marker line with the skill block.
-    Otherwise, inserts before the first placeholder ``{...}``.
+    When USE_PROGRESSIVE_INJECTION is enabled, uses the three-layer pipeline.
+    Otherwise falls back to legacy keyword-overlap injection.
+
+    This wrapper discards the stage_context returned by progressive mode
+    to keep the same return signature. For full progressive support with
+    inter-stage context, call inject_skills_progressive() directly.
     """
-    skills = select_relevant_skills(manager, stage, question, schema_text, error_text, top_k)
-    if not skills:
-        return template
+    from . import config
 
-    skill_block_parts = ["【SQL Strategy Skills — follow these learned patterns to avoid common errors】"]
-    for skill in skills:
-        skill_block_parts.append(f"\n### {skill.summary}\n")
-        skill_block_parts.append(skill.body)
-    skill_block = "\n".join(skill_block_parts)
+    if config.USE_PROGRESSIVE_INJECTION:
+        result, _ = inject_skills_progressive(
+            template, manager, stage, question,
+            schema_text=schema_text,
+            error_text=error_text,
+            max_skills=top_k,
+        )
+        return result
 
-    marker = "【SQL Strategy Skills"
-    marker_pos = template.find(marker)
-    if marker_pos != -1:
-        marker_end = template.find("\n\n", marker_pos)
-        if marker_end == -1:
-            marker_end = len(template)
-        else:
-            marker_end += 1
-        return template[:marker_pos] + skill_block + "\n" + template[marker_end:]
-
-    first_placeholder = re.search(r"\{[a-z_]+\}", template)
-    if first_placeholder:
-        pos = first_placeholder.start()
-        return template[:pos] + skill_block + "\n\n" + template[pos:]
-
-    return skill_block + "\n\n" + template
+    return _inject_skills_legacy(
+        template, manager, stage, question,
+        schema_text, error_text, top_k,
+    )

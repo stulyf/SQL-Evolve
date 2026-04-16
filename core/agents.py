@@ -30,7 +30,7 @@ class Selector:
     Get database description and if need, extract relative tables & columns
     """
 
-    def __init__(self, data_path: str, tables_json_path: str, model_name: str, dataset_name:str, lazy: bool = False, without_selector: bool = False):
+    def __init__(self, data_path: str, tables_json_path: str, model_name: str, dataset_name:str, lazy: bool = False, without_selector: bool = False, skill_manager=None):
         self.data_path = data_path.strip('/').strip('\\')
         self.tables_json_path = tables_json_path
         self.model_name = model_name
@@ -41,6 +41,7 @@ class Selector:
         if not lazy:
             self._load_all_db_info()
         self.without_selector = without_selector
+        self.skill_manager = skill_manager
     
     def init_db2jsons(self):
         if not os.path.exists(self.tables_json_path):
@@ -525,12 +526,31 @@ class Selector:
                db_schema: str,
                db_fk: str,
                evidence: str = None,
-               ) -> dict:
-        prompt = selector_template.format(db_id=db_id, query=query, evidence=evidence, desc_str=db_schema, fk_str=db_fk)
+               ) -> tuple:
+        """Returns (extracted_schema_dict, skill_context)."""
+        template = selector_template
+        skill_context = {}
+
+        if self.skill_manager:
+            from evosql.config import USE_PROGRESSIVE_INJECTION
+            if USE_PROGRESSIVE_INJECTION:
+                from evosql.prompt_injector import inject_skills_progressive
+                template, skill_context = inject_skills_progressive(
+                    template, self.skill_manager, "selector",
+                    question=query, schema_text=db_schema,
+                )
+            else:
+                from evosql.prompt_injector import inject_skills_into_prompt
+                template = inject_skills_into_prompt(
+                    template, self.skill_manager, "selector",
+                    question=query, schema_text=db_schema,
+                )
+
+        prompt = template.format(db_id=db_id, query=query, evidence=evidence, desc_str=db_schema, fk_str=db_fk)
         word_info = extract_world_info(state)
         reply = safe_call_llm(prompt, **word_info)
         extracted_schema_dict = parse_json(reply)
-        return extracted_schema_dict
+        return extracted_schema_dict, skill_context
 
     def process(self, state: SQLaxyState) -> dict:
         """
@@ -548,8 +568,9 @@ class Selector:
         if self.without_selector:
             need_prune = False
         if ext_sch == {} and need_prune:
+            skill_context = {}
             try:
-                raw_extracted_schema_dict = self._prune(
+                raw_extracted_schema_dict, skill_context = self._prune(
                     state, db_id=db_id, query=query, db_schema=db_schema, db_fk=db_fk, evidence=evidence
                 )
             except Exception as e:
@@ -561,13 +582,16 @@ class Selector:
                 db_id=db_id, extracted_schema=raw_extracted_schema_dict
             )
 
-            return {
+            result = {
                 "extracted_schema": raw_extracted_schema_dict,
                 "chosen_db_schem_dict": chosen_db_schem_dict,
                 "desc_str": db_schema_str,
                 "fk_str": db_fk,
                 "pruned": True,
             }
+            if skill_context:
+                result["skill_context"] = skill_context
+            return result
         return {
             "chosen_db_schem_dict": chosen_db_schem_dict,
             "desc_str": db_schema,
@@ -582,19 +606,48 @@ def decomposer_process(state: SQLaxyState, dataset_name: str, skill_manager=None
     schema_info = state.get("desc_str")
     fk_info = state.get("fk_str")
 
+    decomposer_context = {}
+
     if dataset_name == "bird":
         template = decompose_template_bird
         if skill_manager:
-            from evosql.prompt_injector import inject_skills_into_prompt
-            template = inject_skills_into_prompt(
-                template, skill_manager, "decomposer",
-                question=query, schema_text=f"{query} {evidence} {schema_info}",
-            )
+            from evosql.config import USE_PROGRESSIVE_INJECTION
+            if USE_PROGRESSIVE_INJECTION:
+                from evosql.prompt_injector import inject_skills_progressive
+                selector_context = state.get("skill_context", {})
+                template, decomposer_context = inject_skills_progressive(
+                    template, skill_manager, "decomposer",
+                    question=query, schema_text=f"{query} {evidence} {schema_info}",
+                    context_from_prev_stage=selector_context,
+                )
+            else:
+                from evosql.prompt_injector import inject_skills_into_prompt
+                template = inject_skills_into_prompt(
+                    template, skill_manager, "decomposer",
+                    question=query, schema_text=f"{query} {evidence} {schema_info}",
+                )
         prompt = template.format(
             query=query, desc_str=schema_info, fk_str=fk_info, evidence=evidence
         )
     else:
-        prompt = decompose_template_spider.format(
+        template = decompose_template_spider
+        if skill_manager:
+            from evosql.config import USE_PROGRESSIVE_INJECTION
+            if USE_PROGRESSIVE_INJECTION:
+                from evosql.prompt_injector import inject_skills_progressive
+                selector_context = state.get("skill_context", {})
+                template, decomposer_context = inject_skills_progressive(
+                    template, skill_manager, "decomposer",
+                    question=query, schema_text=f"{query} {schema_info}",
+                    context_from_prev_stage=selector_context,
+                )
+            else:
+                from evosql.prompt_injector import inject_skills_into_prompt
+                template = inject_skills_into_prompt(
+                    template, skill_manager, "decomposer",
+                    question=query, schema_text=f"{query} {schema_info}",
+                )
+        prompt = template.format(
             query=query, desc_str=schema_info, fk_str=fk_info
         )
 
@@ -611,7 +664,10 @@ def decomposer_process(state: SQLaxyState, dataset_name: str, skill_manager=None
         print(res)
         time.sleep(1)
 
-    return {"final_sql": res, "qa_pairs": qa_pairs, "fixed": False}
+    result = {"final_sql": res, "qa_pairs": qa_pairs, "fixed": False}
+    if decomposer_context:
+        result["skill_context"] = decomposer_context
+    return result
 
 
 class _RefinerCore:
@@ -685,12 +741,23 @@ class _RefinerCore:
 
         template = refiner_template
         if skill_manager:
-            from evosql.prompt_injector import inject_skills_into_prompt
-            template = inject_skills_into_prompt(
-                template, skill_manager, "refiner",
-                question=query, schema_text=schema_info,
-                error_text=f"{sqlite_error} {exception_class}",
-            )
+            from evosql.config import USE_PROGRESSIVE_INJECTION
+            if USE_PROGRESSIVE_INJECTION:
+                from evosql.prompt_injector import inject_skills_progressive
+                prev_context = state.get("skill_context", {})
+                template, _ = inject_skills_progressive(
+                    template, skill_manager, "refiner",
+                    question=query, schema_text=schema_info,
+                    error_text=f"{sqlite_error} {exception_class}",
+                    context_from_prev_stage=prev_context,
+                )
+            else:
+                from evosql.prompt_injector import inject_skills_into_prompt
+                template = inject_skills_into_prompt(
+                    template, skill_manager, "refiner",
+                    question=query, schema_text=schema_info,
+                    error_text=f"{sqlite_error} {exception_class}",
+                )
 
         prompt = template.format(
             query=query,

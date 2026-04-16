@@ -49,6 +49,7 @@ def build_graph(
         dataset_name=dataset_name,
         lazy=True,
         without_selector=without_selector,
+        skill_manager=skill_manager,
     )
 
     def selector_node(state: SQLaxyState):
